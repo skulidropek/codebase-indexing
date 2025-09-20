@@ -1,0 +1,21 @@
+{
+  "name": "repo-indexer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "index:once": "tsx src/indexer.ts --once",
+    "index:watch": "tsx src/indexer.ts --watch",
+    "search": "tsx src/search.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "chokidar": "^4.0.3",
+    "ignore": "^7.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

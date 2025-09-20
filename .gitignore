@@ -1,0 +1,5 @@
+node_modules/
+.env
+.meili-data/
+.rag_state.json
+.DS_Store
