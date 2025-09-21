@@ -7,7 +7,8 @@
     "index:once": "tsx src/indexer.ts",
     "index:watch": "tsx src/indexer.ts --watch",
     "search": "tsx src/search.ts",
-    "serve": "tsx src/serve.ts"
+    "serve": "tsx src/serve.ts",
+    "status": "tsx src/status.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
