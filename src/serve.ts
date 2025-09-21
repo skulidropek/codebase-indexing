@@ -115,6 +115,23 @@ async function waitForMeili(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error('Timed out waiting for Meilisearch to become healthy');
 }
 
+function withSimilarity<T extends { hits?: unknown[] }>(payload: T): T {
+  if (payload && Array.isArray(payload.hits)) {
+    for (const hit of payload.hits as Record<string, unknown>[]) {
+      const raw = typeof hit._rankingScore === 'number'
+        ? hit._rankingScore
+        : typeof hit._score === 'number'
+          ? hit._score
+          : null;
+      if (typeof raw === 'number' && Number.isFinite(raw)) {
+        const bounded = Math.max(0, Math.min(1, raw));
+        hit.similarityPercent = Number((bounded * 100).toFixed(1));
+      }
+    }
+  }
+  return payload;
+}
+
 async function removeExistingContainer(name: string): Promise<void> {
   await new Promise<void>((resolve) => {
     const proc = spawn('docker', ['rm', '-f', name], { stdio: 'ignore' });
@@ -258,7 +275,12 @@ async function main() {
           });
           const body = await meiliResponse.text();
           res.writeHead(meiliResponse.status, { 'content-type': 'application/json' });
-          res.end(body);
+          try {
+            const json = JSON.parse(body);
+            res.end(JSON.stringify(withSimilarity(json)));
+          } catch {
+            res.end(body);
+          }
           return;
         }
 
@@ -284,7 +306,12 @@ async function main() {
               });
               const meiliBody = await meiliResponse.text();
               res.writeHead(meiliResponse.status, { 'content-type': 'application/json' });
-              res.end(meiliBody);
+              try {
+                const json = JSON.parse(meiliBody);
+                res.end(JSON.stringify(withSimilarity(json)));
+              } catch {
+                res.end(meiliBody);
+              }
             } catch (error) {
               res.writeHead(400, { 'content-type': 'application/json' });
               res.end(JSON.stringify({ error: error instanceof Error ? error.message : error }));
