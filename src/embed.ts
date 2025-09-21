@@ -5,13 +5,23 @@ const MODEL_NAME = process.env.RAG_EMBED_MODEL ?? 'Xenova/bge-small-en-v1.5';
 const OLLAMA_MODEL = process.env.RAG_OLLAMA_MODEL ?? 'nomic-embed-text';
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
 
+type FeatureExtractionFactory = (task: 'feature-extraction', model?: string) => Promise<FeatureExtractionPipeline>;
+
 let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;
+let pipelineFactoryPromise: Promise<FeatureExtractionFactory> | null = null;
 let cachedDim: number | null = null;
+
+async function getPipelineFactory(): Promise<FeatureExtractionFactory> {
+  if (!pipelineFactoryPromise) {
+    pipelineFactoryPromise = import('@huggingface/transformers').then((mod) => mod.pipeline as unknown as FeatureExtractionFactory);
+  }
+  return pipelineFactoryPromise;
+}
 
 async function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (!extractorPromise) {
-    const { pipeline } = await import('@huggingface/transformers');
-    extractorPromise = pipeline('feature-extraction', MODEL_NAME) as Promise<FeatureExtractionPipeline>;
+    const factory = await getPipelineFactory();
+    extractorPromise = factory('feature-extraction', MODEL_NAME);
   }
   return extractorPromise;
 }

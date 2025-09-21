@@ -4,9 +4,10 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "index:once": "tsx src/indexer.ts --once",
+    "index:once": "tsx src/indexer.ts",
     "index:watch": "tsx src/indexer.ts --watch",
-    "search": "tsx src/search.ts"
+    "search": "tsx src/search.ts",
+    "serve": "tsx src/serve.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",

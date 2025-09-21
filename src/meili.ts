@@ -68,6 +68,19 @@ export async function ensureIndex(dimensions: number): Promise<void> {
   }
 }
 
+export async function enableVectorStore(): Promise<void> {
+  const url = `${MEILI_URL.replace(/\/$/, '')}/experimental-features`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: BASE_HEADERS,
+    body: JSON.stringify({ vectorStore: true })
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to enable Meilisearch vector store: ${response.status} ${body}`);
+  }
+}
+
 export async function addDocuments(docs: unknown[], batchSize = DEFAULT_BATCH_SIZE): Promise<void> {
   if (docs.length === 0) {
     return;

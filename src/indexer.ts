@@ -1,6 +1,6 @@
 import path from 'node:path';
 import process from 'node:process';
-import chokidar from 'chokidar';
+import chokidar, { type FSWatcher } from 'chokidar';
 
 import { embed, getEmbeddingDimension } from './embed.js';
 import {
@@ -17,6 +17,17 @@ import { addDocuments, deleteByFilePath, ensureIndex, EMBEDDER_NAME } from './me
 const ROOT = path.resolve(process.env.REPO_ROOT ?? '.');
 const CHUNK_LINES = Number(process.env.RAG_CHUNK_LINES ?? '150');
 const CHUNK_OVERLAP = Number(process.env.RAG_CHUNK_OVERLAP ?? '30');
+
+export interface IndexSummary {
+  indexedFiles: number;
+  indexedChunks: number;
+}
+
+type Logger = (payload: Record<string, unknown>) => void;
+
+const defaultLogger: Logger = (payload) => {
+  console.log(JSON.stringify(payload));
+};
 
 function buildDocumentId(filePath: string, start: number, end: number, fileHash: string): string {
   return sha256(`${filePath}:${start}:${end}:${fileHash}`);
@@ -37,7 +48,7 @@ async function documentsForFile(rel: string, full: string) {
   }));
 }
 
-async function reindexFile(rel: string, full: string): Promise<number> {
+async function reindexFile(rel: string, full: string, logger: Logger): Promise<number> {
   if (!(await withinSizeLimit(full))) {
     await deleteByFilePath(rel);
     return 0;
@@ -47,7 +58,7 @@ async function reindexFile(rel: string, full: string): Promise<number> {
   try {
     docs = await documentsForFile(rel, full);
   } catch (error) {
-    console.error(`Failed to read ${rel}:`, error);
+    logger({ event: 'error', file: rel, message: 'Failed to read file', detail: error instanceof Error ? error.message : error });
     return 0;
   }
   if (docs.length === 0) {
@@ -57,12 +68,12 @@ async function reindexFile(rel: string, full: string): Promise<number> {
   return docs.length;
 }
 
-async function rebuildRepository(): Promise<{ files: number; chunks: number }> {
+async function rebuildRepository(logger: Logger): Promise<IndexSummary> {
   const dimension = await getEmbeddingDimension();
   await ensureIndex(dimension);
   const ignoreMatcher = await loadIgnore(ROOT);
-  let fileCount = 0;
-  let chunkCount = 0;
+  let indexedFiles = 0;
+  let indexedChunks = 0;
   for await (const file of walk(ROOT, ignoreMatcher)) {
     if (!shouldIndex(file.rel)) {
       continue;
@@ -76,34 +87,41 @@ async function rebuildRepository(): Promise<{ files: number; chunks: number }> {
       await deleteByFilePath(file.rel);
       if (docs.length) {
         await addDocuments(docs);
-        fileCount += 1;
-        chunkCount += docs.length;
+        indexedFiles += 1;
+        indexedChunks += docs.length;
       }
     } catch (error) {
-      console.error(`Failed to index ${file.rel}:`, error);
+      logger({ event: 'error', file: file.rel, message: 'Failed to index file', detail: error instanceof Error ? error.message : error });
     }
   }
-  return { files: fileCount, chunks: chunkCount };
+  return { indexedFiles, indexedChunks };
 }
 
-async function indexOnce(): Promise<void> {
-  const summary = await rebuildRepository();
-  console.log(JSON.stringify({ indexedFiles: summary.files, indexedChunks: summary.chunks }));
+export async function indexOnce(logger: Logger = defaultLogger): Promise<IndexSummary> {
+  const summary = await rebuildRepository(logger);
+  logger({ event: 'index', phase: 'complete', ...summary });
+  return summary;
 }
 
 function relativeFromAbsolute(full: string): string {
   return path.relative(ROOT, full).split(path.sep).join('/');
 }
 
-async function watchMode(): Promise<void> {
+export interface WatcherHandle {
+  watcher: FSWatcher;
+  close: () => Promise<void>;
+  summary: IndexSummary;
+}
+
+export async function startWatcher(logger: Logger = defaultLogger): Promise<WatcherHandle> {
   let ignoreMatcher = await loadIgnore(ROOT);
-  const summary = await rebuildRepository();
-  console.log(JSON.stringify({ indexedFiles: summary.files, indexedChunks: summary.chunks }));
+  const summary = await rebuildRepository(logger);
+  logger({ event: 'index', phase: 'initial', ...summary });
 
   let queue = Promise.resolve();
   const enqueue = (task: () => Promise<void>) => {
     queue = queue.then(task).catch((error) => {
-      console.error(error);
+      logger({ event: 'error', message: error instanceof Error ? error.message : error });
     });
     return queue;
   };
@@ -129,8 +147,8 @@ async function watchMode(): Promise<void> {
       return;
     }
     enqueue(async () => {
-      const count = await reindexFile(rel, fullPath);
-      console.log(JSON.stringify({ event: 'add', file: rel, chunks: count }));
+      const count = await reindexFile(rel, fullPath, logger);
+      logger({ event: 'file', action: 'add', file: rel, chunks: count });
     });
   });
 
@@ -139,8 +157,8 @@ async function watchMode(): Promise<void> {
     if (rel === '.gitignore' || rel === '.ragignore') {
       enqueue(async () => {
         ignoreMatcher = await loadIgnore(ROOT);
-        const result = await rebuildRepository();
-        console.log(JSON.stringify({ event: 'ignore-refresh', indexedFiles: result.files, indexedChunks: result.chunks }));
+        const result = await rebuildRepository(logger);
+        logger({ event: 'index', phase: 'ignore-refresh', ...result });
       });
       return;
     }
@@ -148,8 +166,8 @@ async function watchMode(): Promise<void> {
       return;
     }
     enqueue(async () => {
-      const count = await reindexFile(rel, fullPath);
-      console.log(JSON.stringify({ event: 'change', file: rel, chunks: count }));
+      const count = await reindexFile(rel, fullPath, logger);
+      logger({ event: 'file', action: 'change', file: rel, chunks: count });
     });
   });
 
@@ -157,20 +175,31 @@ async function watchMode(): Promise<void> {
     const rel = relativeFromAbsolute(fullPath);
     enqueue(async () => {
       await deleteByFilePath(rel);
-      console.log(JSON.stringify({ event: 'delete', file: rel }));
+      logger({ event: 'file', action: 'delete', file: rel });
     });
   });
+
+  const close = async () => {
+    await watcher.close();
+  };
+
+  return { watcher, close, summary };
 }
 
-async function main() {
+async function cliMain() {
   if (process.argv.includes('--watch')) {
-    await watchMode();
+    await startWatcher();
+    await new Promise(() => {
+      /* keep process alive */
+    });
   } else {
     await indexOnce();
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  cliMain().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}
