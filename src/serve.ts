@@ -254,7 +254,7 @@ async function main() {
           const meiliResponse = await fetch(`${MEILI_URL.replace(/\/$/, '')}/indexes/${INDEX_UID}/search`, {
             method: 'POST',
             headers: BASE_HEADERS,
-            body: JSON.stringify({ vector, limit })
+            body: JSON.stringify({ vector, limit, showRankingScore: true })
           });
           const body = await meiliResponse.text();
           res.writeHead(meiliResponse.status, { 'content-type': 'application/json' });
@@ -280,7 +280,7 @@ async function main() {
               const meiliResponse = await fetch(`${MEILI_URL.replace(/\/$/, '')}/indexes/${INDEX_UID}/search`, {
                 method: 'POST',
                 headers: BASE_HEADERS,
-                body: JSON.stringify({ vector, limit: payload.limit ?? limit })
+                body: JSON.stringify({ vector, limit: payload.limit ?? limit, showRankingScore: true })
               });
               const meiliBody = await meiliResponse.text();
               res.writeHead(meiliResponse.status, { 'content-type': 'application/json' });

@@ -42,7 +42,7 @@ async function search(query: string, limit: number) {
   const response = await fetch(url, {
     method: 'POST',
     headers: BASE_HEADERS,
-    body: JSON.stringify({ vector, limit })
+    body: JSON.stringify({ vector, limit, showRankingScore: true })
   });
   if (!response.ok) {
     const body = await response.text();
@@ -67,7 +67,9 @@ async function main() {
     const start = hit.startLine ?? hit.start ?? '?';
     const end = hit.endLine ?? hit.end ?? '?';
     const rawScore = typeof hit._rankingScore === 'number' ? hit._rankingScore : hit._score;
-    const pct = typeof rawScore === 'number' ? ` ${(Math.max(0, Math.min(1, rawScore)) * 100).toFixed(1)}%` : '';
+    const pct = typeof rawScore === 'number'
+      ? ` ${(Math.max(0, Math.min(1, rawScore)) * 100).toFixed(1)}%`
+      : '';
     console.log(`${path}:${start}-${end}${pct}`);
   }
 }
