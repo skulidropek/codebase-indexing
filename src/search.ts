@@ -3,9 +3,26 @@ import process from 'node:process';
 import { embed } from './embed.js';
 import { BASE_HEADERS, INDEX_UID, MEILI_URL } from './meili.js';
 
-function parseArgs(argv: string[]): { query: string; limit: number; json: boolean } {
+type SearchMode = 'vector' | 'keyword' | 'hybrid';
+
+function parseMode(value?: string | null): SearchMode {
+  const normalized = (value ?? '').toLowerCase();
+  if (normalized === 'keyword' || normalized === 'bm25') {
+    return 'keyword';
+  }
+  if (normalized === 'hybrid') {
+    return 'hybrid';
+  }
+  if (normalized === '' || normalized === 'vector') {
+    return 'vector';
+  }
+  throw new Error(`Unsupported mode: ${value}`);
+}
+
+function parseArgs(argv: string[]): { query: string; limit: number; json: boolean; mode: SearchMode } {
   let limit = Number(process.env.RAG_SEARCH_LIMIT ?? '8');
   let json = false;
+  let mode = parseMode(process.env.RAG_SEARCH_MODE ?? 'vector');
   const words: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -25,6 +42,14 @@ function parseArgs(argv: string[]): { query: string; limit: number; json: boolea
       json = true;
       continue;
     }
+    if (arg === '--mode') {
+      const next = argv[++i];
+      if (!next) {
+        throw new Error('Expected mode after --mode');
+      }
+      mode = parseMode(next);
+      continue;
+    }
     words.push(arg);
   }
 
@@ -33,27 +58,37 @@ function parseArgs(argv: string[]): { query: string; limit: number; json: boolea
     throw new Error('Query text is required. Example: npm run search -- "init database"');
   }
 
-  return { query, limit, json };
+  return { query, limit, json, mode };
 }
 
-async function search(query: string, limit: number) {
-  const vector = (await embed(query)) as number[];
+async function search(query: string, limit: number, mode: SearchMode) {
+  const body: Record<string, unknown> = { limit, showRankingScore: true };
+
+  if (mode === 'keyword' || mode === 'hybrid') {
+    body.q = query;
+  }
+
+  if (mode === 'vector' || mode === 'hybrid') {
+    const vector = (await embed(query)) as number[];
+    body.vector = vector;
+  }
+
   const url = `${MEILI_URL.replace(/\/$/, '')}/indexes/${INDEX_UID}/search`;
   const response = await fetch(url, {
     method: 'POST',
     headers: BASE_HEADERS,
-    body: JSON.stringify({ vector, limit, showRankingScore: true })
+    body: JSON.stringify(body)
   });
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Search failed: ${response.status} ${body}`);
+    const bodyText = await response.text();
+    throw new Error(`Search failed: ${response.status} ${bodyText}`);
   }
   return response.json();
 }
 
 async function main() {
-  const { query, limit, json } = parseArgs(process.argv.slice(2));
-  const result = await search(query, limit);
+  const { query, limit, json, mode } = parseArgs(process.argv.slice(2));
+  const result = await search(query, limit, mode);
   if (json) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -67,10 +102,16 @@ async function main() {
     const start = hit.startLine ?? hit.start ?? '?';
     const end = hit.endLine ?? hit.end ?? '?';
     const rawScore = typeof hit._rankingScore === 'number' ? hit._rankingScore : hit._score;
-    const pct = typeof rawScore === 'number'
-      ? ` ${(Math.max(0, Math.min(1, rawScore)) * 100).toFixed(1)}%`
-      : '';
-    console.log(`${path}:${start}-${end}${pct}`);
+    let scoreText = '';
+    if (typeof rawScore === 'number' && Number.isFinite(rawScore)) {
+      if (mode === 'keyword') {
+        scoreText = ` (score=${rawScore.toFixed(4)})`;
+      } else {
+        const pct = (Math.max(0, Math.min(1, rawScore)) * 100).toFixed(1);
+        scoreText = ` ${pct}%`;
+      }
+    }
+    console.log(`${path}:${start}-${end}${scoreText}`);
   }
 }
 

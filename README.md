@@ -112,9 +112,10 @@ MEILI_URL=http://127.0.0.1:7700 \
 MEILI_KEY=devkey \
 INDEX_UID=repo \
 RAG_EMBED_BACKEND=ollama \
-npm run search -- "инициализация БД"
+npm run search -- "инициализация БД" --mode vector
 ```
 Флаги: `--limit N`, `--json`.
+- `--mode` — `vector` (по умолчанию), `keyword` (BM25) или `hybrid` (одновременный учет vector+BM25).
 
 ### Поиск через curl (fish shell пример)
 ```fish
@@ -131,6 +132,21 @@ curl -s -X POST http://127.0.0.1:7700/indexes/repo/search \
   -H 'Content-Type: application/json' \
   -d '{"limit":5,"vector":'$vector'}' | jq
 ```
+
+### Поиск через HTTP API сервера
+- Векторный (по умолчанию):
+  ```bash
+  curl "http://127.0.0.1:3333/search?q=инициализация%20БД&limit=5"
+  ```
+- Ключевой (BM25):
+  ```bash
+  curl "http://127.0.0.1:3333/search?q=инициализация%20БД&limit=5&mode=keyword"
+  ```
+- Гибридный:
+  ```bash
+  curl "http://127.0.0.1:3333/search?q=инициализация%20БД&limit=5&mode=hybrid"
+  ```
+Для POST можно передать `{"query":"...","mode":"keyword","limit":5}`. Ответ содержит поле `similarityPercent`, если Meilisearch вернул `_rankingScore`.
 
 ## Как работает индексация
 1. Определяем список файлов (`walk`) с учётом `.gitignore`, `.ragignore`, ограничений по размеру и расширениям.

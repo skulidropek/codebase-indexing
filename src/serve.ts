@@ -97,6 +97,22 @@ function parseArgs(argv: string[]): ServeOptions {
   return options;
 }
 
+type SearchMode = 'vector' | 'keyword' | 'hybrid';
+
+function parseMode(value?: string | null): SearchMode {
+  const normalized = (value ?? '').toLowerCase();
+  if (normalized === 'keyword' || normalized === 'bm25') {
+    return 'keyword';
+  }
+  if (normalized === 'hybrid') {
+    return 'hybrid';
+  }
+  if (normalized === '' || normalized === 'vector') {
+    return 'vector';
+  }
+  throw new Error(`Unsupported mode: ${value}`);
+}
+
 async function waitForMeili(url: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -259,19 +275,48 @@ async function main() {
       if (requestUrl.pathname === '/search') {
         const limitParam = requestUrl.searchParams.get('limit');
         const limit = limitParam ? Math.max(1, Number.parseInt(limitParam, 10) || 8) : 8;
+        const modeParam = requestUrl.searchParams.get('mode');
+        let mode: SearchMode;
+        try {
+          mode = parseMode(modeParam ?? 'vector');
+        } catch (error) {
+          res.writeHead(400, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : error }));
+          return;
+        }
 
         if (req.method === 'GET') {
-          const query = requestUrl.searchParams.get('q');
-          if (!query) {
+          const query = requestUrl.searchParams.get('q') ?? '';
+          const meiliPayload: Record<string, unknown> = { limit, showRankingScore: true };
+
+          if (mode === 'keyword' || mode === 'hybrid') {
+            if (!query.trim()) {
+              res.writeHead(400, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing query parameter q' }));
+              return;
+            }
+            meiliPayload.q = query;
+          }
+
+          if (mode === 'vector' || mode === 'hybrid') {
+            if (!query.trim()) {
+              res.writeHead(400, { 'content-type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing query parameter q for vector search' }));
+              return;
+            }
+            const vector = (await embedModule.embed(query)) as number[];
+            meiliPayload.vector = vector;
+          }
+
+          if (!('q' in meiliPayload) && !('vector' in meiliPayload)) {
             res.writeHead(400, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Missing query parameter q' }));
+            res.end(JSON.stringify({ error: 'No search parameters provided' }));
             return;
           }
-          const vector = (await embedModule.embed(query)) as number[];
           const meiliResponse = await fetch(`${MEILI_URL.replace(/\/$/, '')}/indexes/${INDEX_UID}/search`, {
             method: 'POST',
             headers: BASE_HEADERS,
-            body: JSON.stringify({ vector, limit, showRankingScore: true })
+            body: JSON.stringify(meiliPayload)
           });
           const body = await meiliResponse.text();
           res.writeHead(meiliResponse.status, { 'content-type': 'application/json' });
@@ -292,17 +337,46 @@ async function main() {
           req.on('end', async () => {
             try {
               const payload = JSON.parse(body ?? '{}');
-              const query = payload.query ?? payload.q;
-              if (typeof query !== 'string' || !query.trim()) {
+              const query = typeof payload.query === 'string' ? payload.query : (typeof payload.q === 'string' ? payload.q : '');
+              const requestedMode = payload.mode ? parseMode(payload.mode) : mode;
+              const meiliPayload: Record<string, unknown> = {
+                limit: payload.limit ? Math.max(1, Number.parseInt(String(payload.limit), 10) || limit) : limit,
+                showRankingScore: true
+              };
+
+              if (requestedMode === 'keyword' || requestedMode === 'hybrid') {
+                if (!query.trim()) {
+                  res.writeHead(400, { 'content-type': 'application/json' });
+                  res.end(JSON.stringify({ error: 'Missing query for keyword search' }));
+                  return;
+                }
+                meiliPayload.q = query;
+              }
+
+              if (requestedMode === 'vector' || requestedMode === 'hybrid') {
+                let vector: number[] | undefined;
+                if (Array.isArray(payload.vector) && payload.vector.every((v: unknown) => typeof v === 'number')) {
+                  vector = payload.vector as number[];
+                } else if (query.trim()) {
+                  vector = (await embedModule.embed(query)) as number[];
+                } else {
+                  res.writeHead(400, { 'content-type': 'application/json' });
+                  res.end(JSON.stringify({ error: 'Missing query for vector search' }));
+                  return;
+                }
+                meiliPayload.vector = vector;
+              }
+
+              if (!('q' in meiliPayload) && !('vector' in meiliPayload)) {
                 res.writeHead(400, { 'content-type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Missing query in body' }));
+                res.end(JSON.stringify({ error: 'No search parameters provided' }));
                 return;
               }
-              const vector = (await embedModule.embed(query)) as number[];
+
               const meiliResponse = await fetch(`${MEILI_URL.replace(/\/$/, '')}/indexes/${INDEX_UID}/search`, {
                 method: 'POST',
                 headers: BASE_HEADERS,
-                body: JSON.stringify({ vector, limit: payload.limit ?? limit, showRankingScore: true })
+                body: JSON.stringify(meiliPayload)
               });
               const meiliBody = await meiliResponse.text();
               res.writeHead(meiliResponse.status, { 'content-type': 'application/json' });
