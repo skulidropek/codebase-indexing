@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import ignore from 'ignore';
 
 export const MAX_FILE_BYTES = Number(process.env.RAG_MAX_FILE_BYTES ?? 2_000_000);
-const DEFAULT_IGNORES = ['node_modules', '.git', '.next', 'dist', 'build'];
+const DEFAULT_IGNORES = ['node_modules', '.git', '.next', 'dist', 'build', '.meili-data'];
 
 export function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
