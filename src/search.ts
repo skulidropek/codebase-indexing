@@ -66,8 +66,9 @@ async function main() {
     const path = hit.filePath ?? hit.path ?? 'unknown';
     const start = hit.startLine ?? hit.start ?? '?';
     const end = hit.endLine ?? hit.end ?? '?';
-    const score = typeof hit._rankingScore === 'number' ? hit._rankingScore.toFixed(4) : '';
-    console.log(`${path}:${start}-${end}${score ? ` (${score})` : ''}`);
+    const rawScore = typeof hit._rankingScore === 'number' ? hit._rankingScore : hit._score;
+    const pct = typeof rawScore === 'number' ? ` ${(Math.max(0, Math.min(1, rawScore)) * 100).toFixed(1)}%` : '';
+    console.log(`${path}:${start}-${end}${pct}`);
   }
 }
 
